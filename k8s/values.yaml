@@ -42,7 +42,7 @@ database:
   storage: 1Gi
   storageClassName: ""
 ingress:
-  enabled: false
+  enabled: true
   className: nginx
   host: webapp.lab.test
   annotations: {}
