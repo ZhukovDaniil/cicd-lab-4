@@ -1,0 +1,29 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "pc-components.fullname" . }}-migration-{{ .Release.Revision }}
+  labels:
+    {{- include "pc-components.labels" . | nindent 4 }}
+spec:
+  backoffLimit: {{ .Values.migration.backoffLimit }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "pc-components.labels" . | nindent 8 }}
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      initContainers:
+        - name: wait-for-database
+          image: {{ .Values.database.image | quote }}
+          command: ["sh", "-c", "until pg_isready -h {{ include "pc-components.fullname" . }}-postgres -p {{ .Values.database.port }} -U {{ .Values.database.user }}; do echo waiting for database; sleep 2; done"]
+      containers:
+        - name: migrate
+          image: "{{ .Values.migration.image.repository }}:{{ .Values.migration.image.tag }}"
+          imagePullPolicy: {{ .Values.migration.image.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              value: {{ printf "postgresql+psycopg://%s:%s@%s-postgres:%v/%s" .Values.database.user .Values.database.password (include "pc-components.fullname" .) .Values.database.port .Values.database.name | quote }}

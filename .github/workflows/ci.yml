@@ -1,0 +1,109 @@
+name: CI and publish containers
+on:
+  push:
+    branches: ["main", "master"]
+    tags: ["v*.*.*"]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install backend dependencies
+        run: pip install -r backend/requirements.txt
+      - name: Compile Python source
+        run: python -m compileall -q backend/app backend/migrations
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - name: Lint Helm chart
+        run: helm lint k8s
+      - name: Render Helm templates
+        run: helm template lab k8s --namespace webapp-lab > /tmp/rendered.yaml
+      - name: Package Helm chart
+        run: mkdir -p dist && helm package k8s --destination dist
+      - name: Upload Helm chart artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc-components-helm-chart
+          path: dist/*.tgz
+          if-no-files-found: error
+  publish-images:
+    if: github.event_name != 'pull_request'
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set lowercase image owner
+        id: vars
+        shell: bash
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/${{ steps.vars.outputs.owner }}/pc-components-api
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=tag
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+      - uses: docker/metadata-action@v5
+        id: meta-migrate
+        with:
+          images: ghcr.io/${{ steps.vars.outputs.owner }}/pc-components-migrate
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=tag
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile.migrate
+          push: true
+          tags: ${{ steps.meta-migrate.outputs.tags }}
+          labels: ${{ steps.meta-migrate.outputs.labels }}
+      - uses: docker/metadata-action@v5
+        id: meta-frontend
+        with:
+          images: ghcr.io/${{ steps.vars.outputs.owner }}/pc-components-frontend
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+            type=ref,event=tag
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: true
+          tags: ${{ steps.meta-frontend.outputs.tags }}
+          labels: ${{ steps.meta-frontend.outputs.labels }}

@@ -1,0 +1,48 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-components}
+      POSTGRES_USER: ${POSTGRES_USER:-components}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-components} -d ${POSTGRES_DB:-components}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.migrate
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-components}:${POSTGRES_PASSWORD:-change-me-local}@db:5432/${POSTGRES_DB:-components}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-components}:${POSTGRES_PASSWORD:-change-me-local}@db:5432/${POSTGRES_DB:-components}
+      CORS_ORIGINS: http://localhost:8080
+    ports:
+      - "8000:8000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks:
+      default:
+        aliases:
+          - pc-components-api
+  frontend:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - api
+volumes:
+  postgres_data:
