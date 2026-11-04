@@ -10,3 +10,7 @@ dist/
 .DS_Store
 
 rendered.yaml
+
+# Local Kubernetes configuration
+values-local.yaml
+postgres-image.tar
